@@ -103,7 +103,7 @@ prompt, see the command `python print(gdb.prompt.prompt_help())`''',
 
 See the `prompt` attribute. This value is used as a Python format string where
 `{pid}` is expanded with the process identifier of the target program.''',
-                'default': '\[\e[1;35m\]>>>\[\e[0m\]'
+                'default': '\[\e[1;35m\]RISC-V>\[\e[0m\]'
             },
             'prompt_not_running': {
                 'doc': '''Define the value of `{status}` when the target program is running.
@@ -1939,6 +1939,7 @@ class SupervisorModeCSR(Dashboard.Module):
 
     def __init__(self):
         self.table = {}
+        self.info_table = {}
 
     def label(self):
         return 'Supervisor mode CSRs'
@@ -2006,8 +2007,27 @@ class SupervisorModeCSR(Dashboard.Module):
                 padding = ' ' * padding_column[i]
                 item = '{}{} {}'.format(padding, name, value)
                 out[j] += item
+
+        if self.info_table:
+            for s_mode_csr, info in self.info_table.items():
+                out.append(divider(term_width, s_mode_csr))
+                out.append(info)
+
         return out
 
+    def commands(self):
+        return {
+            'info': {
+                'action': self.info,
+                'doc': 'Print info for a S-mode CSR',
+                'complete': gdb.COMPLETE_EXPRESSION
+            },
+            'close': {
+                'action': self.close,
+                'doc': 'Close info for a S-mode CSR',
+                'complete': gdb.COMPLETE_EXPRESSION
+            }
+        }
 
     def attributes(self):
         return {
@@ -2025,6 +2045,92 @@ The empty list (default) causes to show all the available registers.''',
                 'name': 'register_list',
             }
         }
+
+    def info(self, arg):
+        value = gdb.parse_and_eval('${}'.format(arg))
+        hex_value = Registers.format_value(value)
+        binary = bin(int(hex_value, 16))[2:].zfill(64) # MSB is on the left
+        if arg:
+            if arg == 'satp':
+                mode = int(binary[:4], 2)
+                mode_name = ''
+                if mode == 0:
+                    mode_name = " Bare (No translation or protection)"
+                elif mode == 1:
+                    mode_name = " Sv32 (Page-based 32-bit virtual addressing)"
+                elif mode == 8:
+                    mode_name = " Sv39 (Page-based 39-bit virtual addressing)"
+                elif mode == 9:
+                    mode_name = " Sv48 (Page-based 48-bit virtual addressing)"
+                elif mode == 11:
+                    mode_name = " Sv57 (Page-based 57-bit virtual addressing)"
+                else:
+                    mode_name = " Unsupport satp.MODE"
+                self.info_table[arg] = "MODE" + " " + binary[:4] + mode_name + "\n"
+                self.info_table[arg] += "ASID" + " " + binary[4:20] + "\n"
+                self.info_table[arg] += "PPN" + " " + binary[20:]
+            elif arg == 'scause':
+                exception_code = int(binary[1:], 2)
+                cause = ''
+                if binary[:1] == '1':
+                    if exception_code == 1:
+                        cause = "Supervisor software interrupt"
+                    elif exception_code == 5:
+                        cause = "Supervisor timer interrupt"
+                    elif exception_code == 9:
+                        cause = "Supervisor external interrupt"
+                    elif exception_code in [0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14, 15]:
+                        cause = "Reserved"
+                    else:
+                        cause = "Designated for platform use"
+                else:
+                    if exception_code == 0:
+                        cause = "Instruction address misaligned"
+                    elif exception_code == 1:
+                        cause = "Instruction access fault"
+                    elif exception_code == 2:
+                        cause = "Illegal instruction"
+                    elif exception_code == 3:
+                        cause = "Breakpoint"
+                    elif exception_code == 4:
+                        cause = "Load address misaligned"
+                    elif exception_code == 5:
+                        cause = "Load access fault"
+                    elif exception_code == 6:
+                        cause = "Store/AMO address misaligned"
+                    elif exception_code == 7:
+                        cause = "Store/AMO access fault"
+                    elif exception_code == 8:
+                        cause = "Environment call from U-mode"
+                    elif exception_code == 9:
+                        cause = "Environment call from S-mode"
+                    elif exception_code == 12:
+                        cause = "Instruction page fault"
+                    elif exception_code == 13:
+                        cause = "Load page fault"
+                    elif exception_code == 15:
+                        cause = "Store/AMO page fault"
+                    elif exception_code in [10, 11, 14] or \
+                         exception_code in list(range(16, 23 + 1)) or \
+                         exception_code in list(range(32, 47 + 1)) or \
+                         exception_code >= 64:
+                        cause = "Reserved"
+                    else:
+                        cause = "Designated for custom use"
+                self.info_table[arg] = '%s (%s)' % (binary[1:], cause)
+            else:
+                raise Exception("Unsupport S-mode CSR")
+        else:
+            raise Exception('Specify a S-mode CSR')
+
+    def close(self, arg):
+        if arg:
+            try:
+                del self.info_table[arg]
+            except KeyError:
+                raise Exception('S-mode CSR not found')
+        else:
+            raise Exception('Specify a printed S-mode SSR')
 
     @staticmethod
     def format_value(value):
