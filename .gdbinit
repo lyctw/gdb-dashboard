@@ -1734,7 +1734,7 @@ Optionally list the frame arguments and locals too.'''
             info += ' in {}'.format(name)
         sal = frame.find_sal()
         if sal and sal.symtab:
-            file_name = ansi(sal.symtab.filename, style)
+            file_name = ansi(os.path.basename(sal.symtab.filename), style)
             file_line = ansi(str(sal.line), style)
             info += ' at {}:{}'.format(file_name, file_line)
         return info
