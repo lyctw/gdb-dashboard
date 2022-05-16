@@ -1,3 +1,74 @@
+###################################################################
+#    Sv39 translation walker
+#
+# $li represents the level-i PTE address.
+#
+# satp:
+#
+#  63___60_59________44_43________________________0
+# | MODE  |    ASID    |             PPN           |
+#  ‾‾‾4‾‾‾ ‾‾‾‾‾16‾‾‾‾‾ ‾‾‾‾‾‾‾‾‾‾‾‾‾44‾‾‾‾‾‾‾‾‾‾‾‾
+#
+# Virtual address:
+#
+#  38______30_29______21_20______12_11_______________0
+# |  VPN[2]  |  VPN[1]  |  VPN[0]  |   page offset    |
+#  ‾‾‾‾9‾‾‾‾‾‾‾‾‾‾9‾‾‾‾‾‾‾‾‾‾9‾‾‾‾‾‾‾‾‾‾‾‾‾‾12‾‾‾‾‾‾‾‾
+#
+# Physical address:
+#
+#  55____________________30_29______21_20______12_11____________0
+# |         PPN[2]         |  PPN[1]  |  PPN[0]  |  page offset  |
+#  ‾‾‾‾‾‾‾‾‾‾‾26‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾9‾‾‾‾‾‾‾‾‾‾9‾‾‾‾‾‾‾‾‾‾‾‾12‾‾‾‾‾‾‾
+#
+# Page table entry:
+#
+#  63_62__61_60____54_53______28_27__29_18__10_9_8_7_6_5_4_3_2_1_0
+# |N | PBMT |Reserved|  PPN[2]  |PPN[1]|PPN[0]|RSW|D|A|G|U|X|W|R|V|
+#  1‾‾‾‾2‾‾‾‾‾‾‾7‾‾‾‾‾‾‾‾‾26‾‾‾‾‾‾‾9‾‾‾‾‾‾9‾‾‾‾‾2‾‾1‾1‾1‾1‾1‾1‾1‾1
+#
+####################################################################
+define read39
+	monitor nds va off
+	set $l2 = (((unsigned long)$satp & 0xfffffffffff) << 12) | (($arg0 & 0x7fc0000000) >> 27)
+	printf "L2 page table entry:\n"
+	x/gx $l2
+	if (*$l2 & 0x1) == 1
+		if (*$l2 & 0xe) == 0
+			set $l1 = (((*$l2 >> 10) & 0xfffffffffff) << 12) | (($arg0 & 0x3fe00000) >> 18)
+			printf "L1 page table entry:\n"
+			x/gx $l1
+			if (*$l1 & 0x1) == 1
+				if (*$l1 & 0xe) == 0
+					set $l0 = (((*$l1 >> 10) & 0xfffffffffff) << 12) | (($arg0 & 0x1ff000) >> 9)
+					printf "L0 page table entry:\n"
+					x/gx $l0
+					if (*$l0 & 0x1) == 1
+						set $pa = (((*$l0 >> 10) & 0xfffffffffff) << 12) | ($arg0 & 0xfff)
+						printf "L0: leaf PTE found, PA = %p\n",$pa
+						x/gx $pa
+					else
+						printf "L0: page fault\n"
+					end
+				else
+					set $pa = (((*$l1 >> 10) & 0xfffffffffff) << 12) | ($arg0 & 0x1fffff)
+					printf "L1: leaf PTE found, PA = %p\n", $pa
+					x/gx $pa
+				end
+			else
+				printf "L1: page fault\n"
+			end
+		else
+			set $pa = (((*$l2 >> 10) & 0xfffffffffff) << 12) | ($arg0 & 0x3fffffff)
+			printf "L2: leaf PTE found, PA = %p\n", $pa
+			x/gx $pa
+		end
+	else
+		printf "L2: page fault\n"
+	end
+	monitor nds va on
+end
+
 python
 
 # GDB dashboard - Modular visual interface for GDB in Python.
@@ -1967,7 +2038,7 @@ class Registers(Dashboard.Module):
             register_list = Registers.fetch_register_list()
         # fetch registers status
         registers = []
-        for name in register_list:
+        for name in register_list[:32]:
             # exclude registers with a dot '.' or parse_and_eval() will fail
             if '.' in name:
                 continue
